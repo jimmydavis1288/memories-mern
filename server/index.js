@@ -1,4 +1,5 @@
 
+import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
 import mongoose from 'mongoose';
@@ -14,11 +15,24 @@ app.use(cors());
 
 app.use('/posts', postRoutes);
 
-const CONNECTION_URL = 'mongodb+srv://js_mastery:123123123@practice.jto9p.mongodb.net/test';
-const PORT = process.env.PORT|| 5000;
+const CONNECTION_URL = process.env.MONGODB_URI;
+const PORT = process.env.PORT || 5000;
 
-mongoose.connect(CONNECTION_URL, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => app.listen(PORT, () => console.log(`Server Running on Port: http://localhost:${PORT}`)))
-  .catch((error) => console.log(`${error} did not connect`));
+app.listen(PORT, () => console.log(`Server Running on Port: http://localhost:${PORT}`));
 
-mongoose.set('useFindAndModify', false);
+const connectToDatabase = async () => {
+  if (!CONNECTION_URL) {
+    console.log('MONGODB_URI is not set. Using the local fallback store.');
+    return;
+  }
+
+  try {
+    await mongoose.connect(CONNECTION_URL, { serverSelectionTimeoutMS: 5000 });
+    console.log('Connected to MongoDB Atlas');
+  } catch (error) {
+    console.log(`${error.message} did not connect`);
+    console.log('Using the local fallback store. Set MONGODB_URI to enable MongoDB persistence.');
+  }
+};
+
+connectToDatabase();
