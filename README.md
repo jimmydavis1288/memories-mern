@@ -85,6 +85,4 @@ If port 5000 is already occupied, stop the existing server process before runnin
 | PATCH | `/posts/:id/likePost` | Increment its like count |
 | DELETE | `/posts/:id` | Delete a post |
 
-## Notes for production
 
-This is a learning project. Before production, add authentication/authorization, request validation, centralized error handling, tests, pagination, image storage, and environment-specific CORS rules.
