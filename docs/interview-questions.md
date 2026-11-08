@@ -312,29 +312,29 @@ Use this document as a study checklist. You do not need to memorize every senten
 
 ## 7. Project-specific debugging questions
 
-### 75. Why did new posts not appear in Atlas?
+### 75. Why might new posts not appear in the application?
 
-**Short answer:** The backend was in fallback mode because it could not connect to Atlas. The post was stored in `server/data/posts.json` instead.
+**Short answer:** Check the API response, the server's Neon connection, and the Redux action result. The application stores posts in Neon PostgreSQL through Prisma.
 
 ### 76. How do you verify that the API works?
 
 **Short answer:** Open `http://localhost:5000/posts`. A successful API returns JSON, not a React page.
 
-### 77. How do you verify MongoDB is connected?
+### 77. How do you verify the PostgreSQL schema is current?
 
-**Short answer:** The server should log `Connected to MongoDB Atlas`, and a newly created post should appear in Atlas Data Explorer.
+**Short answer:** Run `npx prisma migrate status` from `server`, then create and fetch a post through the API.
 
-### 78. Why can the React app run when Atlas is down?
+### 78. What happens when Neon is unavailable?
 
-**Short answer:** The Express server stays available and uses a JSON fallback store. This is useful for development, not a replacement for a database in production.
+**Short answer:** The API reports a database error; it does not switch to a separate local store that could split or lose writes.
 
-### 79. Why might a delete button fail after upgrading a dependency?
+### 79. How are database operations implemented?
 
-**Short answer:** Library APIs can change. Mongoose 9 removed the old `findByIdAndRemove()` method, so the controller needed `findByIdAndDelete()`.
+**Short answer:** Express controllers use Prisma Client with the Neon adapter; the like endpoint uses an atomic increment.
 
-### 80. What is the risk of using a local JSON fallback in production?
+### 80. Where are database schema changes tracked?
 
-**Short answer:** It does not handle multiple server instances safely, has limited concurrency protection, and can cause data to split between local and cloud storage.
+**Short answer:** In versioned SQL migrations under `server/prisma/migrations`; `DATABASE_URL` stays in the local environment and is not committed.
 
 ## 8. Security and production questions
 

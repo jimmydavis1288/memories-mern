@@ -1,38 +1,32 @@
-
 import 'dotenv/config';
-import express from 'express';
-import bodyParser from 'body-parser';
-import mongoose from 'mongoose';
-import cors from 'cors';
+import { pathToFileURL } from 'node:url';
 
-import postRoutes from './routes/posts.js';
+import app from './app.js';
+import { prisma } from './lib/prisma.js';
 
-const app = express();
+const startServer = async () => {
+  await prisma.$connect();
 
-app.use(bodyParser.json({ limit: '30mb', extended: true }))
-app.use(bodyParser.urlencoded({ limit: '30mb', extended: true }))
-app.use(cors());
+  const port = process.env.PORT || 5000;
+  const server = app.listen(port, () => {
+    console.log(`Server Running on Port: http://localhost:${port}`);
+  });
 
-app.use('/posts', postRoutes);
+  const shutdown = async () => {
+    server.close(async () => {
+      await prisma.$disconnect();
+      process.exit(0);
+    });
+  };
 
-const CONNECTION_URL = process.env.MONGODB_URI;
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => console.log(`Server Running on Port: http://localhost:${PORT}`));
-
-const connectToDatabase = async () => {
-  if (!CONNECTION_URL) {
-    console.log('MONGODB_URI is not set. Using the local fallback store.');
-    return;
-  }
-
-  try {
-    await mongoose.connect(CONNECTION_URL, { serverSelectionTimeoutMS: 5000 });
-    console.log('Connected to MongoDB Atlas');
-  } catch (error) {
-    console.log(`${error.message} did not connect`);
-    console.log('Using the local fallback store. Set MONGODB_URI to enable MongoDB persistence.');
-  }
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 };
 
-connectToDatabase();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer().catch(async (error) => {
+    console.error('Unable to start API:', error.name || 'Error', error.code || 'NO_CODE');
+    await prisma.$disconnect();
+    process.exitCode = 1;
+  });
+}

@@ -2,7 +2,7 @@
 
 ## 60-second project explanation
 
-“Memories is a MERN CRUD application. The React client renders post cards and a form, Redux thunks manage asynchronous Axios calls, and an Express REST API persists post documents with Mongoose and MongoDB Atlas. I implemented CRUD operations, an atomic like counter, and a local fallback store so the application remains demonstrable during a database outage.”
+“Memories is a MERN CRUD application. The React client renders post cards and a form, Redux thunks manage asynchronous Axios calls, and an Express REST API persists posts in Neon PostgreSQL through Prisma 7. The API supports CRUD operations, an atomic like counter, tags, and image uploads.”
 
 ## Questions to practise
 
@@ -30,5 +30,5 @@ Add JWT authentication and ownership checks, validate request bodies, store imag
 
 1. Frontend cannot load data: verify `http://localhost:5000/posts` returns JSON.
 2. `EADDRINUSE`: another process has port 5000; stop it before restarting the server.
-3. Atlas connection fails: check the current public IP in Atlas Network Access and verify `MONGODB_URI` in `server/.env`.
-4. A create is missing from Atlas: confirm the server log says `Connected to MongoDB Atlas`; otherwise it was saved to the local fallback file.
+3. Database connection fails: verify `DATABASE_URL` in `server/.env` and check Neon connectivity without exposing the URL.
+4. A schema change is missing: run `npm run db:deploy` from `server` and check `npx prisma migrate status`.

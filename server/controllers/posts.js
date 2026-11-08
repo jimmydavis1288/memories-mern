@@ -1,199 +1,179 @@
-import express from 'express';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import mongoose from 'mongoose';
+import { prisma } from '../lib/prisma.js';
+import { HttpError } from '../utils/httpError.js';
 
-import PostMessage from '../models/postMessage.js';
+const postInclude = (userId) => ({
+  user: { select: { id: true, fullName: true } },
+  likes: {
+    where: userId ? { userId } : { userId: '__anonymous__' },
+    select: { userId: true },
+  },
+});
 
-const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const fallbackDataFile = path.join(__dirname, '..', 'data', 'posts.json');
+const toApiPost = (post) => ({
+  _id: post.id,
+  title: post.title,
+  message: post.message,
+  creator: post.user?.fullName || post.creator || '',
+  tags: post.tags,
+  selectedFile: post.selectedFile,
+  likeCount: post.likeCount,
+  createdAt: post.createdAt,
+  updatedAt: post.updatedAt,
+  user: post.user,
+  likedByMe: post.likes.length > 0,
+});
 
-let fallbackPosts = [];
+const findPostOrThrow = async (id) => {
+  const post = await prisma.post.findUnique({ where: { id } });
 
-const loadFallbackPosts = () => {
-    try {
-        if (fs.existsSync(fallbackDataFile)) {
-            const rawPosts = fs.readFileSync(fallbackDataFile, 'utf8');
-            fallbackPosts = JSON.parse(rawPosts);
-        }
-    } catch (error) {
-        console.log('Unable to load fallback posts:', error.message);
-        fallbackPosts = [];
-    }
+  if (!post) {
+    throw new HttpError(404, 'Memory not found.');
+  }
+
+  return post;
 };
 
-const saveFallbackPosts = () => {
-    try {
-        fs.mkdirSync(path.dirname(fallbackDataFile), { recursive: true });
-        fs.writeFileSync(fallbackDataFile, JSON.stringify(fallbackPosts, null, 2));
-    } catch (error) {
-        console.log('Unable to save fallback posts:', error.message);
-    }
+const assertOwnership = (post, userId) => {
+  if (post.userId !== userId) {
+    throw new HttpError(403, 'You can only change your own memories.');
+  }
 };
 
-const isMongoConnected = () => mongoose.connection.readyState === 1;
+const sendError = (next, error) => {
+  if (error.code === 'P2025') {
+    return next(new HttpError(404, 'Memory not found.'));
+  }
 
-loadFallbackPosts();
+  return next(error);
+};
 
-export const getPosts = async (req, res) => { 
-    if (!isMongoConnected()) {
-        res.status(200).json(fallbackPosts);
-        return;
+export const getPosts = async (req, res, next) => {
+  try {
+    const posts = await prisma.post.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: postInclude(req.user?.id),
+    });
+
+    res.status(200).json(posts.map(toApiPost));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getPost = async (req, res, next) => {
+  try {
+    const post = await prisma.post.findUnique({
+      where: { id: req.params.id },
+      include: postInclude(req.user?.id),
+    });
+
+    if (!post) {
+      throw new HttpError(404, 'Memory not found.');
     }
 
-    try {
-        const postMessages = await PostMessage.find();
-                
-        res.status(200).json(postMessages);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
-}
+    res.status(200).json(toApiPost(post));
+  } catch (error) {
+    next(error);
+  }
+};
 
-export const getPost = async (req, res) => { 
-    const { id } = req.params;
+export const createPost = async (req, res, next) => {
+  try {
+    const post = await prisma.post.create({
+      data: {
+        ...req.body,
+        creator: req.user.fullName,
+        userId: req.user.id,
+      },
+      include: postInclude(req.user.id),
+    });
 
-    try {
-        const post = await PostMessage.findById(id);
-        
-        res.status(200).json(post);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
-}
+    res.status(201).json(toApiPost(post));
+  } catch (error) {
+    next(error);
+  }
+};
 
-export const createPost = async (req, res) => {
-    const { title, message, selectedFile, creator, tags } = req.body;
+export const updatePost = async (req, res, next) => {
+  try {
+    const existingPost = await findPostOrThrow(req.params.id);
+    assertOwnership(existingPost, req.user.id);
 
-    if (!isMongoConnected()) {
-        const newPostMessage = {
-            _id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            title,
-            message,
-            selectedFile,
-            creator,
-            tags: Array.isArray(tags) ? tags : [],
-            likeCount: 0,
-            createdAt: new Date().toISOString(),
-        };
+    const post = await prisma.post.update({
+      where: { id: req.params.id, userId: req.user.id },
+      data: req.body,
+      include: postInclude(req.user.id),
+    });
 
-        fallbackPosts = [newPostMessage, ...fallbackPosts];
-        saveFallbackPosts();
+    res.status(200).json(toApiPost(post));
+  } catch (error) {
+    sendError(next, error);
+  }
+};
 
-        res.status(201).json(newPostMessage);
-        return;
-    }
+export const deletePost = async (req, res, next) => {
+  try {
+    const existingPost = await findPostOrThrow(req.params.id);
+    assertOwnership(existingPost, req.user.id);
+    await prisma.post.delete({ where: { id: req.params.id, userId: req.user.id } });
 
-    const newPostMessage = new PostMessage({ title, message, selectedFile, creator, tags })
+    res.status(200).json({ message: 'Post deleted successfully.' });
+  } catch (error) {
+    sendError(next, error);
+  }
+};
 
-    try {
-        await newPostMessage.save();
+export const likePost = async (req, res, next) => {
+  try {
+    const post = await prisma.$transaction(async (transaction) => {
+      await findPostOrThrow(req.params.id);
+      const like = await transaction.like.createMany({
+        data: { userId: req.user.id, postId: req.params.id },
+        skipDuplicates: true,
+      });
 
-        res.status(201).json(newPostMessage );
-    } catch (error) {
-        res.status(409).json({ message: error.message });
-    }
-}
+      if (like.count > 0) {
+        await transaction.post.update({
+          where: { id: req.params.id },
+          data: { likeCount: { increment: 1 } },
+        });
+      }
 
-export const updatePost = async (req, res) => {
-    const { id } = req.params;
-    const { title, message, creator, selectedFile, tags } = req.body;
+      return transaction.post.findUnique({
+        where: { id: req.params.id },
+        include: postInclude(req.user.id),
+      });
+    });
 
-    if (!isMongoConnected()) {
-        const existingPostIndex = fallbackPosts.findIndex((post) => post._id === id);
+    res.status(200).json(toApiPost(post));
+  } catch (error) {
+    sendError(next, error);
+  }
+};
 
-        if (existingPostIndex === -1) {
-            return res.status(404).send(`No post with id: ${id}`);
-        }
+export const unlikePost = async (req, res, next) => {
+  try {
+    const post = await prisma.$transaction(async (transaction) => {
+      await findPostOrThrow(req.params.id);
+      const like = await transaction.like.deleteMany({
+        where: { userId: req.user.id, postId: req.params.id },
+      });
 
-        const updatedPost = {
-            ...fallbackPosts[existingPostIndex],
-            creator,
-            title,
-            message,
-            tags: Array.isArray(tags) ? tags : [],
-            selectedFile,
-            _id: id,
-        };
+      if (like.count > 0) {
+        await transaction.post.update({
+          where: { id: req.params.id },
+          data: { likeCount: { decrement: 1 } },
+        });
+      }
 
-        fallbackPosts[existingPostIndex] = updatedPost;
-        saveFallbackPosts();
+      return transaction.post.findUnique({
+        where: { id: req.params.id },
+        include: postInclude(req.user.id),
+      });
+    });
 
-        return res.json(updatedPost);
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).send(`No post with id: ${id}`);
-
-    const updatedPost = { creator, title, message, tags, selectedFile, _id: id };
-
-    await PostMessage.findByIdAndUpdate(id, updatedPost, { new: true });
-
-    res.json(updatedPost);
-}
-
-export const deletePost = async (req, res) => {
-    const { id } = req.params;
-
-    if (!isMongoConnected()) {
-        fallbackPosts = fallbackPosts.filter((post) => post._id !== id);
-        saveFallbackPosts();
-        return res.json({ message: 'Post deleted successfully.' });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).send(`No post with id: ${id}`);
-
-    try {
-        const deletedPost = await PostMessage.findByIdAndDelete(id);
-
-        if (!deletedPost) return res.status(404).send(`No post with id: ${id}`);
-
-        return res.json({ message: 'Post deleted successfully.' });
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-}
-
-export const likePost = async (req, res) => {
-    const { id } = req.params;
-
-    if (!isMongoConnected()) {
-        const existingPostIndex = fallbackPosts.findIndex((post) => post._id === id);
-
-        if (existingPostIndex === -1) {
-            return res.status(404).send(`No post with id: ${id}`);
-        }
-
-        const updatedPost = {
-            ...fallbackPosts[existingPostIndex],
-            likeCount: (fallbackPosts[existingPostIndex].likeCount || 0) + 1,
-        };
-
-        fallbackPosts[existingPostIndex] = updatedPost;
-        saveFallbackPosts();
-
-        return res.json(updatedPost);
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).send(`No post with id: ${id}`);
-
-    try {
-        // Increment in MongoDB so rapid clicks cannot overwrite one another.
-        const updatedPost = await PostMessage.findByIdAndUpdate(
-            id,
-            { $inc: { likeCount: 1 } },
-            { new: true },
-        );
-
-        if (!updatedPost) return res.status(404).send(`No post with id: ${id}`);
-
-        return res.json(updatedPost);
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-}
-
-
-export default router;
+    res.status(200).json(toApiPost(post));
+  } catch (error) {
+    sendError(next, error);
+  }
+};
